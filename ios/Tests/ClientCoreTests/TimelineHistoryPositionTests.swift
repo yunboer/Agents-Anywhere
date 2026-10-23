@@ -86,4 +86,57 @@ import Testing
         let unrelated = history.laidOut(layout(first: "earlier-tool", anchor: "other-tool", y: 900, edge: .bottom), generation: 8)
         #expect(unrelated == nil)
     }
+
+    @Test func lazyAnchorIsRequestedOncePerPresentedPage() {
+        var history = TimelineHistoryPosition(id: 9, layout: layout(), offsetY: 420, topInset: 80)
+        history.receivedPage(firstRowID: "earlier")
+        // HTTP completion can see the new presentation before the View's callback.
+        history.recordPresentation(firstRowID: "earlier")
+        let needsAnchor = history.presentedPage(firstRowID: "earlier")
+        #expect(needsAnchor)
+        let repeatedOrCancelled = history.presentedPage(firstRowID: "earlier")
+        #expect(!repeatedOrCancelled)
+        #expect(!history.isReadyToFinish)
+        let correction = history.laidOut(layout(first: "earlier", y: 1080), generation: 9)
+        #expect(correction == 1420)
+        #expect(history.isReadyToFinish)
+    }
+
+    @Test func cancelledLazyAnchorDoesNotNeedToMaterializeToFinish() {
+        var history = TimelineHistoryPosition(id: 10, layout: layout(), offsetY: 20, topInset: 80)
+        history.cancelRestoration()
+        history.receivedPage(firstRowID: "earlier")
+        #expect(!history.isReadyToFinish)
+        let repeatedOrCancelled = history.presentedPage(firstRowID: "earlier")
+        #expect(!repeatedOrCancelled)
+        #expect(history.isReadyToFinish)
+        let correction = history.laidOut(layout(first: "earlier", y: 1080), generation: 10)
+        #expect(correction == nil)
+    }
+
+    @Test func missingLazyAnchorFinishesAfterPresentationInEitherOrder() {
+        for presentationFirst in [false, true] {
+            var history = TimelineHistoryPosition(id: 11, layout: nil, offsetY: 0, topInset: 80)
+            if presentationFirst { history.recordPresentation(firstRowID: "earlier") }
+            history.receivedPage(firstRowID: "earlier")
+            if !presentationFirst {
+                #expect(!history.isReadyToFinish)
+                history.recordPresentation(firstRowID: "earlier")
+            }
+            #expect(history.isReadyToFinish)
+        }
+    }
+
+    @Test func identityNavigationStillRestoresAnUnchangedMeasuredOffset() {
+        var history = TimelineHistoryPosition(id: 12, layout: layout(), offsetY: 420, topInset: 80)
+        let needsAnchor = history.presentedPage(firstRowID: "earlier")
+        #expect(needsAnchor)
+        // Native identity navigation may align the anchor even when lazy height
+        // estimates leave its content coordinate unchanged. Restore the inset.
+        let correction = history.laidOut(layout(first: "earlier"), generation: 12)
+        let repeated = history.laidOut(layout(first: "earlier"), generation: 12)
+        #expect(correction == 420)
+        #expect(repeated == nil)
+    }
+
 }
