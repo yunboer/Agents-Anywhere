@@ -23,6 +23,7 @@ nonisolated struct TimelineHistoryPosition: Equatable {
     private var restorationCancelled = false
     private var presentedFirstRowID: String?
     private var requestedAnchorFor: String?
+    private var restoredFirstRowID: String?
     private(set) var restoredOffset: CGFloat?
 
     init(id: Int, layout: TimelineHistoryLayout?, offsetY: CGFloat, topInset: CGFloat) {
@@ -57,7 +58,10 @@ nonisolated struct TimelineHistoryPosition: Equatable {
     @discardableResult mutating func presentedPage(firstRowID: String?) -> Bool {
         presentedFirstRowID = firstRowID
         guard !restorationCancelled, let origin, let firstRowID,
-              firstRowID != origin.firstRowID, requestedAnchorFor != firstRowID else { return false }
+              firstRowID != origin.firstRowID, requestedAnchorFor != firstRowID,
+              restoredFirstRowID != firstRowID else { return false }
+        // Layout may arrive before this callback. Do not replace an already
+        // measured point restoration with a viewport-edge identity target.
         requestedAnchorFor = firstRowID
         return true
     }
@@ -75,7 +79,9 @@ nonisolated struct TimelineHistoryPosition: Equatable {
               layout.anchorRowID == origin.anchorRowID, layout.edge == origin.edge,
               layout.firstRowID != origin.firstRowID else { return nil }
         let offset = originOffset + layout.y - origin.y
-        if let restoredOffset, abs(offset - restoredOffset) <= 0.5 { return nil }
+        if restoredFirstRowID == layout.firstRowID,
+           let restoredOffset, abs(offset - restoredOffset) <= 0.5 { return nil }
+        restoredFirstRowID = layout.firstRowID
         restoredOffset = offset
         return offset
     }

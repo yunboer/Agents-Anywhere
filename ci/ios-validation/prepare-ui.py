@@ -156,8 +156,10 @@ final class TimelineUITests: XCTestCase {
         older.tap()
         XCTAssertTrue(wait { count.label == "Rows: 140" })
         XCTAssertTrue(wait { !app.descendants(matching: .any)["validation.loading"].exists })
-        XCTAssertTrue(wait { anchor.exists && abs(anchor.frame.minY - before) < 15 }, "Prepending history should preserve the measured anchor")
+        let anchorRestored = wait { anchor.exists && abs(anchor.frame.minY - before) < 15 }
+        print("History anchor before: \(before), after: \(anchor.frame.minY)")
         attach(app, "After prepend")
+        XCTAssertTrue(anchorRestored, "Prepending history should preserve the measured anchor")
         let bottom = app.buttons["chat.timeline.bottom"]
         let tail = app.staticTexts["validation.tail"]
         func tailIsVisible() -> Bool {

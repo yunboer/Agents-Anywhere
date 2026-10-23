@@ -114,6 +114,18 @@ import Testing
         #expect(correction == nil)
     }
 
+    @Test func materializedPageKeepsItsPointRestorationWhenPresentationArrivesLater() {
+        var history = TimelineHistoryPosition(id: 14, layout: layout(), offsetY: 420, topInset: 80)
+        // SwiftUI can measure a still-mounted anchor before delivering onChange.
+        let correction = history.laidOut(layout(first: "earlier", y: 1080), generation: 14)
+        #expect(correction == 1420)
+        let needsAnchor = history.presentedPage(firstRowID: "earlier")
+        #expect(!needsAnchor)
+        // A previous page's measurement cannot suppress a new page's target.
+        let nextPageNeedsAnchor = history.presentedPage(firstRowID: "earliest")
+        #expect(nextPageNeedsAnchor)
+    }
+
     @Test func missingLazyAnchorFinishesAfterPresentationInEitherOrder() {
         for presentationFirst in [false, true] {
             var history = TimelineHistoryPosition(id: 11, layout: nil, offsetY: 0, topInset: 80)
