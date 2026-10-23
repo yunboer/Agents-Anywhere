@@ -14,6 +14,10 @@ func fixture<Value: Decodable>(_ name: String, as: Value.Type = Value.self) thro
     try JSONDecoder().decode(Value.self, from: fixtureData(name))
 }
 '''
+# App target enables NonisolatedNonsendingByDefault; fixture transports must
+# implement the nonisolated production protocols without inferred actor state.
+support = support.replace('@MainActor final class TestHTTPTransport', 'nonisolated final class TestHTTPTransport').replace('@MainActor final class TestRealtimeAPI', 'nonisolated final class TestRealtimeAPI')
+support = support.replace('\nfunc ', '\nnonisolated func ')
 (app/'ValidationSupport.swift').write_text(support)
 (app/'ValidationChatHost.swift').write_text(r'''
 import SwiftUI
@@ -44,7 +48,7 @@ import SwiftUI
     return SessionChatModel(session: repo.session(id: "session"), repository: repo,
         attachments: .init(attachmentAPI: V2AttachmentAPI(transport: http)))
 }
-private func validationItem(_ n: Int) throws -> [String: Any] {
+nonisolated private func validationItem(_ n: Int) throws -> [String: Any] {
     var item = try itemObject(id: "message-\(n)", order: n,
         text: "Validation message \(n)\n\n" + String(repeating: "Paragraph **bold** and `inline code` for scrolling. ", count: n % 5 + 1))
     item["type"] = "message"; item["role"] = n % 2 == 0 ? "assistant" : "user"

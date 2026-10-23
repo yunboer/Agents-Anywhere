@@ -158,8 +158,9 @@ struct ChatTimelineView: View {
             .onChange(of: model.isOpeningReady, initial: true) { _, ready in
                 if ready { scrolling.open(interactionPresented: hasInteractions) }
             }
-            .onChange(of: scrolling.navigationGeneration) { _, _ in
+            .onChange(of: scrolling.navigationGeneration) { _, generation in
                 releaseScrollPosition()
+                historyPosition?.navigationChanged(generation: generation)
             }
             .task(id: scrolling.pendingBottomRequest) {
                 guard let request = scrolling.pendingBottomRequest, !navigationIsSuspended else { return }

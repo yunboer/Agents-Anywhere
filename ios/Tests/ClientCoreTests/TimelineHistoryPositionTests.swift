@@ -139,4 +139,21 @@ import Testing
         #expect(repeated == nil)
     }
 
+    @Test func newerNavigationFinishesWithoutRematerializingTheHistoryAnchor() {
+        var history = TimelineHistoryPosition(id: 13, layout: layout(), offsetY: 20, topInset: 80)
+        // Creating the history request itself changes the navigation generation.
+        history.navigationChanged(generation: 13)
+        history.receivedPage(firstRowID: "earlier")
+        history.recordPresentation(firstRowID: "earlier")
+        #expect(!history.isReadyToFinish)
+        // Sending a message can return to the tail while the history request is
+        // in flight. Its now-offscreen anchor may never report another layout.
+        history.navigationChanged(generation: 14)
+        #expect(history.isReadyToFinish)
+        let needsAnchor = history.presentedPage(firstRowID: "earlier")
+        #expect(!needsAnchor)
+        let correction = history.laidOut(layout(first: "earlier", y: 1080), generation: 14)
+        #expect(correction == nil)
+    }
+
 }

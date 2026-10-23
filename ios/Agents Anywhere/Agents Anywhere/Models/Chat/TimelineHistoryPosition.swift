@@ -64,6 +64,10 @@ nonisolated struct TimelineHistoryPosition: Equatable {
 
     mutating func cancelRestoration() { restorationCancelled = true }
 
+    mutating func navigationChanged(generation: Int) {
+        if generation != id { cancelRestoration() }
+    }
+
     mutating func laidOut(_ layout: TimelineHistoryLayout, generation: Int) -> CGFloat? {
         latestLayout = layout
         presentedFirstRowID = layout.firstRowID
