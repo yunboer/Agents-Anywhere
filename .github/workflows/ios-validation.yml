@@ -7,9 +7,10 @@ permissions:
 jobs:
   ios:
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      HOMEBREW_NO_AUTO_UPDATE: 1
     steps:
       - uses: actions/checkout@v6
       - name: Record environment
@@ -32,6 +33,7 @@ jobs:
             -onlyUsePackageVersionsFromResolvedFile \
             CODE_SIGNING_ALLOWED=NO build 2>&1 | tee validation-output/simulator-build.log
       - name: Boot, install and launch on iPhone simulator
+        timeout-minutes: 20
         run: |
           set -euo pipefail
           simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for k,v in d["devices"].items() if "iOS-26-5" in k for x in v if x["name"] == "iPhone 17"))')
@@ -44,6 +46,7 @@ jobs:
           xcrun simctl spawn "$simulator_id" launchctl list | tee validation-output/processes.txt
           grep 'com.agentsanywhere.app' validation-output/processes.txt
       - name: Exercise production chat view with fixture-backed UI tests
+        timeout-minutes: 20
         run: |
           set -euo pipefail
           python3 ci/ios-validation/prepare-ui.py

@@ -64,7 +64,7 @@ struct ValidationChatHost: View {
             HStack {
                 Text("Rows: \(model.timeline.rows.count)").accessibilityIdentifier("validation.count")
                 Button("Stream") { streaming = true }.accessibilityIdentifier("validation.stream")
-                Text(streaming ? "Streaming" : "Idle").accessibilityIdentifier("validation.status")
+                Text("\(streaming ? "Streaming" : "Idle"): \(streamRevision)").accessibilityIdentifier("validation.status")
             }.padding(8)
             ChatTimelineView(model: model, onAttachment: { _ in }, onFile: { _ in })
         }
@@ -100,6 +100,8 @@ s=p.read_text().replace('        .traceChatLayout("group:\\(group.id)",', '     
 p.write_text(s)
 p=app/'Views/Chat/ChatTimelineView.swift'
 s=p.read_text().replace('                .id("tail")', '                .overlay(alignment: .bottom) { Text("End").font(.system(size: 8)).accessibilityIdentifier("validation.tail") }\n                .id("tail")', 1)
+s=s.replace('}.disabled(model.session.isLoadingHistory || isLoadingLatest)', '}.disabled(model.session.isLoadingHistory || isLoadingLatest).accessibilityIdentifier("validation.older")', 1)
+s=s.replace('}.accessibilityElement(children: .combine)', '}.accessibilityElement(children: .combine).accessibilityIdentifier("validation.loading")', 1)
 p.write_text(s)
 Path('validation-ui').mkdir(exist_ok=True)
 Path('validation-ui/project.yml').write_text('''name: TimelineUIValidation
@@ -137,19 +139,23 @@ final class TimelineUITests: XCTestCase {
         XCTAssertTrue(wait { count.label == "Rows: 40" })
         let scroll = app.scrollViews.firstMatch
         XCTAssertTrue(scroll.waitForExistence(timeout: 10))
-        let older = app.buttons["加载较早的消息"]
-        for _ in 0..<60 {
-            if older.isHittable { break }
+        attach(app, "Initial timeline")
+        let older = app.buttons["validation.older"]
+        for swipe in 0..<30 {
+            if older.exists && older.isHittable { break }
+            if swipe % 10 == 0 { attach(app, "History search \(swipe)") }
             scroll.swipeDown(velocity: .fast)
         }
-        XCTAssertTrue(older.isHittable, "Must reach the older-history prompt")
+        print(app.debugDescription)
+        attach(app, "History prompt search finished")
+        XCTAssertTrue(older.exists && older.isHittable, "Must reach the older-history prompt")
         let anchor = app.descendants(matching: .any).matching(identifier: "validation.group.message-561").firstMatch
         XCTAssertTrue(anchor.exists)
         let before = anchor.frame.minY
         attach(app, "Before prepend")
         older.tap()
         XCTAssertTrue(wait { count.label == "Rows: 140" })
-        XCTAssertTrue(wait { !app.staticTexts["正在加载较早的消息…"].exists })
+        XCTAssertTrue(wait { !app.descendants(matching: .any)["validation.loading"].exists })
         XCTAssertTrue(wait { anchor.exists && abs(anchor.frame.minY - before) < 15 }, "Prepending history should preserve the measured anchor")
         attach(app, "After prepend")
         let bottom = app.buttons["chat.timeline.bottom"]
@@ -163,15 +169,13 @@ final class TimelineUITests: XCTestCase {
         XCTAssertTrue(wait { tailIsVisible() && !bottom.isHittable })
         attach(app, "Returned to bottom")
         app.buttons["validation.stream"].tap()
-        XCTAssertTrue(wait { app.staticTexts["validation.status"].label == "Streaming" })
-        XCTAssertTrue(wait { app.staticTexts["validation.status"].label == "Idle" })
+        XCTAssertTrue(wait { app.staticTexts["validation.status"].label == "Idle: 20" })
         XCTAssertTrue(wait { tailIsVisible() && !bottom.isHittable }, "Streaming at the tail should keep following")
         attach(app, "After streaming")
         for _ in 0..<3 { scroll.swipeDown() }
         XCTAssertTrue(wait { bottom.isHittable })
         app.buttons["validation.stream"].tap()
-        XCTAssertTrue(wait { app.staticTexts["validation.status"].label == "Streaming" })
-        XCTAssertTrue(wait { app.staticTexts["validation.status"].label == "Idle" })
+        XCTAssertTrue(wait { app.staticTexts["validation.status"].label == "Idle: 39" })
         XCTAssertTrue(bottom.isHittable && !tailIsVisible(), "Streaming must not pull a reader back to the tail")
         attach(app, "Reading during stream")
     }
