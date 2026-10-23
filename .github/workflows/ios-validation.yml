@@ -18,8 +18,6 @@ jobs:
           git rev-parse HEAD | tee validation-output/commit.txt
           xcodebuild -version | tee validation-output/xcode.txt
           xcrun simctl list devices available | tee validation-output/devices.txt
-          simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for k,v in d["devices"].items() if "iOS-26-5" in k for x in v if x["name"] == "iPhone 17"))')
-          xcrun simctl boot "$simulator_id"
       - name: Run unmodified client-core tests
         run: |
           set -o pipefail
@@ -37,6 +35,7 @@ jobs:
         run: |
           set -euo pipefail
           simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for k,v in d["devices"].items() if "iOS-26-5" in k for x in v if x["name"] == "iPhone 17"))')
+          xcrun simctl boot "$simulator_id"
           xcrun simctl bootstatus "$simulator_id" -b
           xcrun simctl install "$simulator_id" "$RUNNER_TEMP/aa-derived/Build/Products/Debug-iphonesimulator/Agents Anywhere.app"
           xcrun simctl launch "$simulator_id" com.agentsanywhere.app | tee validation-output/launch.txt
@@ -64,6 +63,13 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/ui-tests" \
             -resultBundlePath validation-output/timeline-ui.xcresult \
             CODE_SIGNING_ALLOWED=NO 2>&1 | tee validation-output/timeline-ui.log
+      - name: Export UI diagnostics
+        if: always()
+        run: |
+          if [ -d validation-output/timeline-ui.xcresult ]; then
+            xcrun xcresulttool get object --legacy --path validation-output/timeline-ui.xcresult --format json > validation-output/timeline-ui.json || true
+            xcrun xcresulttool export attachments --path validation-output/timeline-ui.xcresult --output-path validation-output/screenshots || true
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:

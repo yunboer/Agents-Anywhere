@@ -58,6 +58,7 @@ nonisolated private func validationItem(_ n: Int) throws -> [String: Any] {
 struct ValidationChatHost: View {
     @State private var model = validationChat()
     @State private var streaming = false
+    @State private var streamRevision = 1
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -73,10 +74,12 @@ struct ValidationChatHost: View {
         }
         .task(id: streaming) {
             guard streaming else { return }
-            for revision in 2...20 {
+            let endRevision = streamRevision + 19
+            for revision in (streamRevision + 1)...endRevision {
+                streamRevision = revision
                 var item = try! validationItem(600)
                 item["revision"] = revision
-                item["status"] = revision == 20 ? "done" : "running"
+                item["status"] = revision == endRevision ? "done" : "running"
                 item["content"] = ["text": "Validation message 600\n\n" + String(repeating: "Streamed paragraph with **Markdown**.\n\n", count: revision)]
                 let value: V2TimelineItem = try! decode(item)
                 let items = model.timeline.rows.map { $0.id == value.id ? value : $0.value }
@@ -94,6 +97,9 @@ s=p.read_text().replace('            RootView()', '            ValidationChatHos
 p.write_text(s)
 p=app/'Views/Chat/SessionTimelineEventView.swift'
 s=p.read_text().replace('        .traceChatLayout("group:\\(group.id)",', '        .accessibilityElement(children: .contain)\n        .accessibilityIdentifier("validation.group.\\(group.id)")\n        .traceChatLayout("group:\\(group.id)",',1)
+p.write_text(s)
+p=app/'Views/Chat/ChatTimelineView.swift'
+s=p.read_text().replace('                .id("tail")', '                .overlay(alignment: .bottom) { Text("End").font(.system(size: 8)).accessibilityIdentifier("validation.tail") }\n                .id("tail")', 1)
 p.write_text(s)
 Path('validation-ui').mkdir(exist_ok=True)
 Path('validation-ui/project.yml').write_text('''name: TimelineUIValidation
@@ -122,6 +128,7 @@ Path('validation-ui/TimelineUITests.swift').write_text(r'''
 import XCTest
 final class TimelineUITests: XCTestCase {
     @MainActor func testHistoryReturnAndStreaming() throws {
+        continueAfterFailure = false
         let app = XCUIApplication(bundleIdentifier: "com.agentsanywhere.app")
         app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
         app.launch()
@@ -146,21 +153,26 @@ final class TimelineUITests: XCTestCase {
         XCTAssertTrue(wait { anchor.exists && abs(anchor.frame.minY - before) < 15 }, "Prepending history should preserve the measured anchor")
         attach(app, "After prepend")
         let bottom = app.buttons["chat.timeline.bottom"]
+        let tail = app.staticTexts["validation.tail"]
+        func tailIsVisible() -> Bool {
+            tail.exists && tail.isHittable && tail.frame.minY >= scroll.frame.minY
+                && tail.frame.maxY <= scroll.frame.maxY + 2
+        }
         XCTAssertTrue(wait { bottom.isHittable })
         bottom.tap()
-        XCTAssertTrue(wait { !bottom.isHittable })
+        XCTAssertTrue(wait { tailIsVisible() && !bottom.isHittable })
         attach(app, "Returned to bottom")
         app.buttons["validation.stream"].tap()
         XCTAssertTrue(wait { app.staticTexts["validation.status"].label == "Streaming" })
         XCTAssertTrue(wait { app.staticTexts["validation.status"].label == "Idle" })
-        XCTAssertFalse(bottom.isHittable, "Streaming at the tail should keep following")
+        XCTAssertTrue(wait { tailIsVisible() && !bottom.isHittable }, "Streaming at the tail should keep following")
         attach(app, "After streaming")
         for _ in 0..<3 { scroll.swipeDown() }
         XCTAssertTrue(wait { bottom.isHittable })
         app.buttons["validation.stream"].tap()
         XCTAssertTrue(wait { app.staticTexts["validation.status"].label == "Streaming" })
         XCTAssertTrue(wait { app.staticTexts["validation.status"].label == "Idle" })
-        XCTAssertTrue(bottom.isHittable, "Streaming must not pull a reader back to the tail")
+        XCTAssertTrue(bottom.isHittable && !tailIsVisible(), "Streaming must not pull a reader back to the tail")
         attach(app, "Reading during stream")
     }
     @MainActor private func wait(_ condition: @escaping () -> Bool) -> Bool {
