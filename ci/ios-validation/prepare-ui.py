@@ -42,6 +42,11 @@ import SwiftUI
             page["hasMore"] = start > 1
             return try JSONSerialization.data(withJSONObject: page)
         }
+        if call.path.hasSuffix("notices") {
+            var object = try fixtureObject("notices")
+            object["notices"] = []
+            return try JSONSerialization.data(withJSONObject: object)
+        }
         return try http.defaultResponse(call)
     }
     let repo = repository(transport: http)
