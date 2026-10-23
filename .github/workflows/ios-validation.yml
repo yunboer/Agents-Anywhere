@@ -36,11 +36,15 @@ jobs:
         timeout-minutes: 20
         run: |
           set -euo pipefail
-          simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for k,v in d["devices"].items() if "iOS-26-5" in k for x in v if x["name"] == "iPhone 17"))')
-          xcrun simctl boot "$simulator_id"
+          device_type=$(xcrun simctl list devicetypes -j | python3 -c 'import json,sys; print(next(x["identifier"] for x in json.load(sys.stdin)["devicetypes"] if x["name"] == "iPhone SE (3rd generation)"))')
+          simulator_id=$(xcrun simctl create "Timeline Validation" "$device_type" com.apple.CoreSimulator.SimRuntime.iOS-26-5)
+          echo "SIMULATOR_ID=$simulator_id" >> "$GITHUB_ENV"
+          set -x
+          open -a Simulator --args -CurrentDeviceUDID "$simulator_id"
+          xcrun simctl boot "$simulator_id" || true
           xcrun simctl bootstatus "$simulator_id" -b
           xcrun simctl install "$simulator_id" "$RUNNER_TEMP/aa-derived/Build/Products/Debug-iphonesimulator/Agents Anywhere.app"
-          xcrun simctl launch "$simulator_id" com.agentsanywhere.app | tee validation-output/launch.txt
+          python3 -c 'import subprocess,sys; subprocess.run(sys.argv[1:], check=True, timeout=180)' xcrun simctl launch "$simulator_id" com.agentsanywhere.app | tee validation-output/launch.txt
           sleep 10
           xcrun simctl io "$simulator_id" screenshot validation-output/launch.png
           xcrun simctl spawn "$simulator_id" launchctl list | tee validation-output/processes.txt
@@ -56,7 +60,7 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/aa-derived" \
             -onlyUsePackageVersionsFromResolvedFile \
             CODE_SIGNING_ALLOWED=NO build 2>&1 | tee validation-output/fixture-build.log
-          simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for k,v in d["devices"].items() if "iOS-26-5" in k for x in v if x["name"] == "iPhone 17"))')
+          simulator_id="$SIMULATOR_ID"
           xcrun simctl terminate "$simulator_id" com.agentsanywhere.app || true
           xcrun simctl install "$simulator_id" "$RUNNER_TEMP/aa-derived/Build/Products/Debug-iphonesimulator/Agents Anywhere.app"
           if ! command -v xcodegen; then brew install xcodegen; fi
@@ -68,7 +72,13 @@ jobs:
             CODE_SIGNING_ALLOWED=NO 2>&1 | tee validation-output/timeline-ui.log
       - name: Export UI diagnostics
         if: always()
+        timeout-minutes: 3
         run: |
+          if [ -n "${SIMULATOR_ID:-}" ]; then
+            python3 -c 'import subprocess,sys; subprocess.run(sys.argv[1:], timeout=30)' xcrun simctl io "$SIMULATOR_ID" screenshot validation-output/final-state.png || true
+          fi
+          ps -axo pid,pcpu,pmem,comm > validation-output/host-processes.txt
+          vm_stat > validation-output/host-memory.txt
           if [ -d validation-output/timeline-ui.xcresult ]; then
             xcrun xcresulttool get object --legacy --path validation-output/timeline-ui.xcresult --format json > validation-output/timeline-ui.json || true
             xcrun xcresulttool export attachments --path validation-output/timeline-ui.xcresult --output-path validation-output/screenshots || true
