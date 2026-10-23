@@ -119,6 +119,7 @@ import XCTest
 final class TimelineUITests: XCTestCase {
     @MainActor func testHistoryReturnAndStreaming() throws {
         let app = XCUIApplication(bundleIdentifier: "com.agentsanywhere.app")
+        app.launchArguments = ["-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"]
         app.launch()
         let count = app.staticTexts["validation.count"]
         XCTAssertTrue(count.waitForExistence(timeout: 20))
