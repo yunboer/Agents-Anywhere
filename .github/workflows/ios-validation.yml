@@ -1,0 +1,51 @@
+name: iOS PR validation
+on:
+  push:
+    branches: [ci/ios-validation]
+permissions:
+  contents: read
+jobs:
+  ios:
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v6
+      - name: Record environment
+        run: |
+          mkdir -p validation-output
+          git rev-parse HEAD | tee validation-output/commit.txt
+          xcodebuild -version | tee validation-output/xcode.txt
+          xcrun simctl list devices available | tee validation-output/devices.txt
+      - name: Run unmodified client-core tests
+        run: |
+          set -o pipefail
+          swift test --package-path ios 2>&1 | tee validation-output/core-tests.log
+      - name: Build complete simulator app
+        run: |
+          set -o pipefail
+          xcodebuild -project 'ios/Agents Anywhere/Agents Anywhere.xcodeproj' \
+            -scheme 'Agents Anywhere' -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/aa-derived" \
+            -onlyUsePackageVersionsFromResolvedFile \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee validation-output/simulator-build.log
+      - name: Boot, install and launch on iPhone simulator
+        run: |
+          set -euo pipefail
+          simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for k,v in d["devices"].items() if "iOS-26-5" in k for x in v if x["name"] == "iPhone 17"))')
+          xcrun simctl boot "$simulator_id"
+          xcrun simctl bootstatus "$simulator_id" -b
+          xcrun simctl install "$simulator_id" "$RUNNER_TEMP/aa-derived/Build/Products/Debug-iphonesimulator/Agents Anywhere.app"
+          xcrun simctl launch "$simulator_id" com.agentsanywhere.app | tee validation-output/launch.txt
+          sleep 10
+          xcrun simctl io "$simulator_id" screenshot validation-output/launch.png
+          xcrun simctl spawn "$simulator_id" launchctl list | tee validation-output/processes.txt
+          grep 'com.agentsanywhere.app' validation-output/processes.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-validation
+          path: validation-output
+          retention-days: 14
