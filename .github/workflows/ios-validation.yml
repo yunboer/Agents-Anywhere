@@ -17,11 +17,13 @@ jobs:
         run: |
           mkdir -p validation-output
           git rev-parse HEAD | tee validation-output/commit.txt
+          git rev-parse HEAD:ios | tee validation-output/ios-tree.txt
           xcodebuild -version | tee validation-output/xcode.txt
           xcrun simctl list devices available | tee validation-output/devices.txt
       - name: Run unmodified client-core tests
         run: |
           set -o pipefail
+          swift test --package-path ios list 2>&1 | tee validation-output/test-list.log
           swift test --package-path ios 2>&1 | tee validation-output/core-tests.log
       - name: Build complete simulator app
         run: |

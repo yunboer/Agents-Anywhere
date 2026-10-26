@@ -10,56 +10,63 @@
 探针保留在外层，避免这些状态依赖离屏视图的生命周期。
 
 历史页插入后，原锚点可能离开惰性布局的渲染范围，因此先按 ID 定位，再按
-测量差值恢复消息内部的阅读偏移。用户取消定位时，加载完成依据是数据已进入
+测量差值恢复消息内部的阅读偏移。如果布局回调先到，同页已经得到的精确偏移
+不能再被后到的 ID 定位覆盖。用户取消定位时，加载完成依据是数据已进入
 展示层，不再等待离屏锚点产生几何回调。
 
 虚拟化粒度是消息组。单条很长的 Markdown、展开的工具组及全量分组计算仍有
 开销。本报告没有测得帧率、内存或主线程耗时改善，不将核心测试等同于 UI 性能验证。
 
-## 环境
+## 方案选择与不变量
 
-- Apple silicon，macOS 26.5.1。
-- Command Line Tools，Apple Swift 6.3.2。
-- 未安装完整 Xcode、iOS SDK 和 Simulator runtime。
-- 临时编译产物和隔离测试副本存放于外置 APFS 卷，不提交缓存或锁文件。
+选择原生 `LazyVStack` 是为了沿用现有 SwiftUI 消息组、Markdown 渲染器和滚动状态机。
+没有引入第三方列表库或自维护高度缓存，也没有裁剪已加载的历史数据。
+
+- 消息和工具组使用原有稳定 ID；折叠状态仍由会话模型持有。
+- 前插历史按原锚点的几何差值修正，不将同时发生的尾部流式增长算作历史增高。
+- 用户开始滚动或侧栏接管导航时取消定位，避免网络返回后覆盖新的阅读意图。
+- 加载提示和尾部探针仍然挂载；惰性布局只负责消息组。
+- 单条长消息、展开工具组内的布局以及全量分组计算不在本次优化范围。
+
+这延续了 [iOS 流式渲染优化 #199](https://github.com/anywhere-labs/Agents-Anywhere/pull/199)
+与 [跨端长会话优化 #394](https://github.com/anywhere-labs/Agents-Anywhere/pull/394)
+区分实现、正确性检查和性能测量的方式。两者是相关工作，不代表本 PR 的验证结果。
+
+## 环境与可核查证据
+
+- 云端：GitHub Actions `macos-26`，Xcode 26.6，iPhone SE（第 3 代）/ iOS 26.5 Simulator。
+- 本地：Apple silicon，macOS 26.5.1，Command Line Tools / Swift 6.3.2；没有完整 Xcode。
+- 本地临时产物和隔离测试副本存放于外置 APFS 卷，不提交缓存或锁文件。
+- [本轮原始源码与模拟器验证](https://github.com/yunboer/Agents-Anywhere/actions/runs/40030631983)：
+  原始 `Package.swift` 的核心测试、完整 App 构建、安装启动与后续聊天 UI 回归均通过。
+  日志、截图和 `.xcresult` 见 `ios-validation` 附件。
+- 验证分支只位于贡献者 fork，工作流和测试注入不包含在产品 PR 中。
+  验证与 PR 的 `ios/` Git tree 均为 `f13f89bb494c8967fa72af3d74e8e0905e1ecda5`。
+  附件保留 14 天；[验证工作流](https://github.com/yunboer/Agents-Anywhere/blob/9193c22ea00fdb1995d2a89e76087a86c8139894/.github/workflows/ios-validation.yml)
+  与 [UI 测试及 fixture](https://github.com/yunboer/Agents-Anywhere/blob/9193c22ea00fdb1995d2a89e76087a86c8139894/ci/ios-validation/prepare-ui.py)
+  固定到该轮提交，便于复现。
 
 ## 检查结果
 
 | 检查 | 结果 |
 | --- | --- |
-| 原始项目 `swift build --package-path ios` | 通过，核心源码构建成功 |
-| 隔离环境完整 ClientCore 测试 | **251 项、31 个套件全部通过**，测试执行约 2.318 秒，不含构建时间 |
-| 历史定位套件 | **11 项通过**，含本 PR 新增的 4 项 |
-| 改动视图和测试文件的 Swift 语法解析 | 通过 |
-| 新增滚动 API 的独立 SwiftUI 类型检查 | 通过；不等于完整视图或 App 编译 |
+| Xcode 原始 manifest 的 ClientCore 构建及测试 | **253 项、31 个套件全部通过**，测试执行约 4.509 秒，不含构建时间 |
+| 本地 CLT 隔离环境 ClientCore 测试 | **253 项、31 个套件通过**，约 2.062 秒 |
+| 历史定位套件 | **13 项通过**，含本 PR 新增的 6 项 |
+| 完整 iOS App 模拟器构建 | 通过，Debug / `CODE_SIGNING_ALLOWED=NO` |
+| 原始 App 安装、启动 | 通过，启动截图和存活进程已核对 |
+| 聊天交互回归 | **1 个 XCTest UI 用例通过**，覆盖下文 4 类交互 |
 | `git diff --check` | 通过 |
-| 完整 iOS App 构建、模拟器交互、性能对比 | 尚未执行 |
+| 真机 / Instruments 性能对比 | 尚未执行 |
 
-测试编译首次发现新增测试将 mutating 方法直接传给 `#expect`，宏展开时报
-`cannot use mutating member on immutable value`。已改成先执行操作、保存结果再断言，
-重新编译并通过上述完整测试。
-
-### Command Line Tools 隔离环境
-
-原始 `swift test` 因工具链缺少 `Testing` 模块无法运行。本轮复制 `ios/` 到临时
-目录，仅在副本的 `Package.swift` 添加 Swift 官方测试框架依赖：
-
-- `swiftlang/swift-testing`：`swift-6.3.2-RELEASE`，revision
-  `70eff261d7f462cad1fff51e05bcc74aa0b0f420`。
-- 解析得到 `swiftlang/swift-syntax` 603.0.2，revision
-  `79e4b74a295b6eb74a8b585e3a39d29e70c1dbd1`。
-- CLT 同时缺少 `_TestingInterop`；从上述同版本官方源文件
-  `Sources/_TestingInterop/FallbackEventHandler.swift` 编译临时动态库，并通过
-  `-Xlinker -L...` 和 `-rpath` 供此测试进程使用。没有替换系统库。
-
-运行前比对副本与仓库的 Swift 源码和测试文件，除临时 manifest 外内容一致。
-正式项目没有新增依赖。此结果证明 macOS 上 ClientCore 测试通过，仍需在完整
-Xcode 环境用下列标准命令验证 iOS 构建。
+本地 CLT 缺少 `Testing` 和 `_TestingInterop`，因此本地结果来自隔离副本，
+临时使用 Swift 官方 `swift-6.3.2-RELEASE` 测试框架。正式项目没有添加这些依赖；
+云端 Xcode 使用原始 manifest 运行标准测试，是本报告的主要验证依据。
 
 ## 历史定位覆盖场景
 
-`ios/Tests/ClientCoreTests/TimelineHistoryPositionTests.swift` 共 11 个测试，
-其中本 PR 新增 4 个：
+`ios/Tests/ClientCoreTests/TimelineHistoryPositionTests.swift` 共 13 个测试，
+其中本 PR 新增 6 个：
 
 | 场景 | 检查内容 |
 | --- | --- |
@@ -74,8 +81,28 @@ Xcode 环境用下列标准命令验证 iOS 构建。
 | 取消后的离屏锚点（新增） | 没有几何回调也能在展示完成后结束 |
 | 没有测量锚点（新增） | 请求和展示以任意顺序完成均能结束 |
 | 估算坐标未变化（新增） | ID 定位后仍恢复消息内偏移，重复测量不再修正 |
+| 加载中发生程序化导航（新增） | 新导航取消旧锚点恢复，无后续布局回调也能结束加载；自身 generation 不会误取消 |
+| 布局先于页面通知（新增） | 同页已有精确偏移时不再请求 ID 贴顶；其他页仍可请求锚点 |
 
 ## 标准复现命令
+
+### 自动发现与执行
+
+`ios/Package.swift` 的 `ClientCoreTests` test target 指向 `Tests/ClientCoreTests`。
+历史定位用例位于 `TimelineHistoryPositionTests.swift`，使用 Swift Testing 的
+`@Suite` / `@Test`，由标准测试命令自动发现和执行。可先列出用例核对收集结果：
+
+```sh
+swift test --package-path ios list
+```
+
+其中应包含 `TimelineHistoryPositionTests` 的 13 个用例；新增的 6 个用例覆盖
+惰性锚点重建、取消、缺失锚点、估算坐标不变、程序化导航和布局回调先到。
+验证工作流保存 `test-list.log` 与实际执行的 `core-tests.log`，分别用于核对
+测试收集和测试结果。UI 用例由 fork 验证脚本生成，单独通过 `xcodebuild test`
+运行，不包含在这 253 项 Swift Package 核心测试中。
+
+### 构建与测试
 
 在已安装兼容 Xcode 的 Mac 上，从仓库根目录运行：
 
@@ -97,52 +124,43 @@ swiftc -frontend -parse \
   ios/Tests/ClientCoreTests/TimelineHistoryPositionTests.swift
 ```
 
-## 待执行的 UI 与性能验证
+## 失败与取消时的行为
 
-用相同设备、构建配置和构造会话比较基线与 PR。逐次加载至 100、500、1,000 条
-记录，混合长 Markdown、代码块、图片和工具组，记录打开耗时、内存及滚动卡顿。
-通过 Instruments 检查离屏 Markdown 布局工作与主线程耗时。保留原始 trace，
-再报告差异；模拟器结果也不能直接作为真机帧率结论。
+- 历史请求失败、返回空页或首行未变化时，沿用现有请求和错误处理；恢复状态无需
+  再等待新的锚点布局，也不会为未增加的历史发出位置修正。
+- 用户开始拖动、侧栏接管导航或发送消息触发新导航时，取消旧的恢复意图；请求与
+  展示完成后结束加载，即使原锚点已经离屏，也不依赖它重新产生几何回调。
+- 如果请求开始时没有测量到锚点，允许数据正常展示并结束加载；此路径不承诺保留
+  消息内部偏移。有锚点时，只有同一导航 generation 的有效测量才能恢复位置。
 
-交互检查包括：长消息内前插历史、工具组合并、加载中拖离/打开侧栏、失败与最终
-历史页、到底部、跟随流式回复、主动上滑后停止跟随、折叠状态恢复、键盘、旋转和
-Dynamic Type。上述检查尚未执行；PR 保持 Draft。
+这些分支由历史定位核心测试覆盖；网络失败、侧栏取消的真实 UI 验收仍属于下文
+列明的未覆盖场景。
 
-仓库现有 CI 不包含 iOS 构建或测试，因此该 CI 的通过/跳过不能替代本节验证。
+## 模拟器交互回归
 
-## 隔离测试的复现方法
+UI 测试运行真实的 `SessionChatModel` 和 `ChatTimelineView`，使用固定 HTTP 响应，
+并逐步向末条消息追加 Markdown，模拟流式内容增长。测试只在验证分支替换启动入口、
+注入数据和辅助可访问性标记；原始 App 在注入前已完成独立构建、安装和启动。
 
-以下命令用于只有相同 CLT 的环境；有完整 Xcode 时优先使用上面的标准命令。
-从仓库根目录执行，先将 `VALIDATION_DIR` 设为一个新的临时目录，路径不要含空格：
+同一个 XCTest 用例依次验证下列场景，全部通过，前后截图已经核对：
 
-```sh
-export VALIDATION_DIR=/path/to/new-validation-directory
-mkdir -p "$VALIDATION_DIR/ios" "$VALIDATION_DIR/support"
-rsync -a --exclude .build ios/ "$VALIDATION_DIR/ios/"
-python3 - <<'PY'
-import os
-from pathlib import Path
-p = Path(os.environ["VALIDATION_DIR"]) / "ios/Package.swift"
-s = p.read_text().replace(
-    '    targets: [',
-    '    dependencies: [.package(url: "https://github.com/swiftlang/swift-testing.git", '
-    'revision: "70eff261d7f462cad1fff51e05bcc74aa0b0f420")],\n    targets: [', 1
-).replace(
-    'dependencies: ["ClientCore"],',
-    'dependencies: ["ClientCore", .product(name: "Testing", package: "swift-testing")],'
-)
-p.write_text(s)
-PY
-swift package --package-path "$VALIDATION_DIR/ios" \
-  --scratch-path "$VALIDATION_DIR/build" resolve
-swiftc -emit-library -parse-as-library -package-name swift_testing \
-  -module-name _TestingInterop -target arm64-apple-macosx15.0 \
-  "$VALIDATION_DIR/build/checkouts/swift-testing/Sources/_TestingInterop/FallbackEventHandler.swift" \
-  -o "$VALIDATION_DIR/support/lib_TestingInterop.dylib"
-swift test --package-path "$VALIDATION_DIR/ios" \
-  --scratch-path "$VALIDATION_DIR/build" \
-  -Xlinker -L"$VALIDATION_DIR/support" \
-  -Xlinker -rpath -Xlinker "$VALIDATION_DIR/support"
-```
+| 场景 | 断言与结果 |
+| --- | --- |
+| 前插历史 | 从 40 条增加到 140 条，加载提示结束；原消息组屏幕 Y 坐标为 **136.5 → 136.5 pt**，满足偏移小于 15 pt 的断言 |
+| 返回底部 | 点击到底部后，实际尾部标记位于视口内，返回按钮消失 |
+| 底部流式增长 | 末条消息连续追加至 revision 20 后，尾部仍可见 |
+| 上滑阅读时流式增长 | 主动上滑后继续追加至 revision 39，尾部保持离屏，返回按钮仍可见 |
 
-SwiftSyntax 解析版本应与上述记录一致；若不同，应记录实际版本，不能视为同一环境。
+这验证了普通、无待审批通知的固定数据场景，不代表真实账号、服务端或 WebSocket
+端到端验证。长消息内部翻页、工具组合并、取消恢复等还有核心状态测试覆盖；
+相应 UI 场景以及审批、侧栏、键盘、旋转和 Dynamic Type 尚未逐项运行。
+
+## 后续性能测量
+
+本 PR 不给出帧率或内存改善的数值结论。需要用相同设备、构建配置和构造会话比较
+基线与 PR，逐次加载至 100、500、1,000 条记录，混合长 Markdown、代码块、图片和
+工具组，记录打开耗时、内存及滚动卡顿。通过 Instruments 检查离屏 Markdown 布局
+工作与主线程耗时，保留原始 trace 后再报告差异；模拟器不能替代真机帧率测量。
+
+仓库现有 CI 不包含 iOS 构建或测试；外部贡献者的上游工作流还需维护者批准运行。
+上游检查的通过或跳过不能替代本报告的 iOS 验证。

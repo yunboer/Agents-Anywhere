@@ -121,6 +121,7 @@ import com.agentsanywhere.app.feature.sessiondetail.SESSION_NOTICE_RESPONSE_CAPA
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_PERMISSION_CATALOG_CAPABILITY
 import com.agentsanywhere.app.feature.sessiondetail.SESSION_SEND_MESSAGE_CAPABILITY
 import com.agentsanywhere.app.feature.sessiondetail.selectionOptions
+import com.agentsanywhere.app.feature.sessiondetail.modelSelectionOptions
 import com.agentsanywhere.app.feature.sessiondetail.sessionComposerEnabled
 import com.agentsanywhere.app.feature.sessiondetail.validatedSelection
 import com.agentsanywhere.app.feature.sessions.mergeAuthoritativeSessionMetadata
@@ -132,6 +133,7 @@ import com.agentsanywhere.app.feature.sessions.NewSessionSelections
 import com.agentsanywhere.app.feature.sessions.firstMessageRequest
 import com.agentsanywhere.app.feature.sessions.NewSessionModelCatalog
 import com.agentsanywhere.app.feature.sessions.NewSessionPermissionCatalog
+import com.agentsanywhere.app.feature.sessions.toRemoteRuntimeModel
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalForegroundService
 import com.agentsanywhere.app.feature.terminal.RemoteTerminalPool
 import com.agentsanywhere.app.model.AgentDevice
@@ -908,37 +910,14 @@ fun SessionDetailScreen(
             scope.launch {
                 onLoadPreparedModelCatalog(pending.connectorId, pending.runtimeId)
                     .onSuccess { catalog ->
-                        preparedModelOptions = catalog.models.flatMap { model ->
-                            val reasoning = model.reasoningItems.filter { it.selectionId.isNotBlank() }
-                            if (reasoning.isNotEmpty()) {
-                                reasoning.map { item ->
-                                    com.agentsanywhere.app.feature.sessiondetail.RuntimeSelectionOption(
-                                        selectionId = item.selectionId,
-                                        label = listOf(model.displayName, item.displayName)
-                                            .filter(String::isNotBlank).joinToString(" · "),
-                                        description = item.description ?: model.description,
-                                        default = item.default || (model.default && reasoning.first() == item),
-                                        enabled = model.enabled && item.enabled,
-                                        disabledReason = item.disabledReason ?: model.disabledReason,
-                                    )
-                                }
-                            } else {
-                                model.selectionId?.takeIf(String::isNotBlank)?.let { id ->
-                                    listOf(
-                                        com.agentsanywhere.app.feature.sessiondetail.RuntimeSelectionOption(
-                                            selectionId = id,
-                                            label = model.displayName.ifBlank { model.id },
-                                            description = model.description,
-                                            default = model.default,
-                                            enabled = model.enabled,
-                                            disabledReason = model.disabledReason,
-                                        ),
-                                    )
-                                }.orEmpty()
-                            }
-                        }.distinctBy { it.selectionId }
+                        preparedModelOptions = catalog.models
+                            .map { it.toRemoteRuntimeModel() }
+                            .modelSelectionOptions()
                         preparedSelections = preparedSelections.copy(
-                            model = preparedModelOptions.validatedSelection(preparedSelections.model),
+                            model = preparedModelOptions.validatedSelection(
+                                preparedSelections.model,
+                                defaultWhenMissing = true,
+                            ),
                         )
                     }
                     .onFailure { preparedModelError = it.message ?: context.getString(R.string.session_runtime_model_catalog_failed) }
@@ -990,7 +969,10 @@ fun SessionDetailScreen(
                                 )
                             }
                         preparedSelections = preparedSelections.copy(
-                            permission = options.validatedSelection(preparedSelections.permission),
+                            permission = options.validatedSelection(
+                                preparedSelections.permission,
+                                defaultWhenMissing = true,
+                            ),
                         )
                     }
                     .onFailure { preparedPermissionError = it.message ?: context.getString(R.string.session_runtime_permission_catalog_failed) }
@@ -1866,6 +1848,10 @@ fun SessionDetailScreen(
             permissionOptions = permissionOptions,
             selectedModelId = modelSelection,
             selectedPermissionId = permissionSelection,
+            pendingSelectionScopes = (state.runtime.metadata["pendingSelectionScopes"] as? List<*>)
+                ?.filterIsInstance<String>()
+                ?.toSet()
+                .orEmpty(),
             modelLoading = if (isPreparedSession) preparedModelLoading else state.catalogs.modelLoading,
             permissionLoading = if (isPreparedSession) preparedPermissionLoading else state.catalogs.permissionLoading,
             modelErrorMessage = if (isPreparedSession) preparedModelError else state.catalogs.modelErrorMessage,

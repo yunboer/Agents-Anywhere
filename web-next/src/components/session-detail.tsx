@@ -336,6 +336,11 @@ export function SessionDetail({
     getOptimisticItems,
     getOptimisticSessionState,
     isOptimisticSession,
+    sessionCreations,
+    retrySessionCreation,
+    editSessionCreation,
+    navigateToDevice,
+    openSession,
     markOptimisticMessageFailed,
     replaceHome,
   } = useWorkspace()
@@ -470,6 +475,8 @@ export function SessionDetail({
 
   const composerDraft = composerDraftState.sessionId === sessionId ? composerDraftState.value : ""
   const isLocalOptimisticSession = isOptimisticSession(sessionId)
+  const creation = sessionCreations[sessionId]
+  const creationFailed = creation?.status === "failed"
   const hasInitialSessionState = state !== null
 
   React.useEffect(() => {
@@ -550,9 +557,7 @@ export function SessionDetail({
       return true
     } catch (err) {
       // An official operation can partially succeed. Read the actual selection before rolling back.
-      const actual = sessionRuntimeType(session) === "dsh"
-        ? await dashboardApi.getSessionRuntimeState(token, session.id).catch(() => null)
-        : null
+      const actual = await dashboardApi.getSessionRuntimeState(token, session.id).catch(() => null)
       if (selectionUpdateSeqRef.current === selectionUpdateSeq) {
         setState((current) =>
           current
@@ -1182,7 +1187,7 @@ export function SessionDetail({
   const handleSend = async (
     content: string,
     attachments: AttachedFile[],
-    selections: { model?: string; permission?: string },
+    _selections: { model?: string; permission?: string },
   ): Promise<boolean> => {
     if (!session || (!content.trim() && attachments.length === 0)) return false
     const uploadedAttachments = attachments.flatMap((attachment) =>
@@ -1216,23 +1221,7 @@ export function SessionDetail({
     })
     setSending(true)
     try {
-      const selectionPatch = selectionPatchFromComposerSelections(runtimeState?.selections ?? {}, selections)
-      if (Object.keys(selectionPatch).length > 0) {
-        const selectionResult = await dashboardApi.updateSessionSelections(token, session.id, selectionPatch)
-        setState((current) =>
-          current
-            ? {
-                ...current,
-                state: runtimeStateWithSelectionResult(
-                  current.state,
-                  current.session,
-                  selectionPatch,
-                  selectionResult.state,
-                ),
-              }
-            : current,
-        )
-      }
+      await selectionWritesRef.current.get(session.id)
       await dashboardApi.sendSessionMessage(token, session.id, messageText, {
         attachments: uploadedAttachments.map((attachment) => ({ fileId: attachment.fileId })),
         clientMessageId,
@@ -1670,7 +1659,7 @@ export function SessionDetail({
         >
           <div
             ref={timelineContentRef}
-            aria-busy={runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running"}
+            aria-busy={!creationFailed && (runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running")}
             className={cn(
               "mx-auto flex w-full min-w-0 max-w-[calc(48rem+2rem)] flex-col gap-3 overflow-hidden px-4 pb-44 pt-20",
             )}
@@ -1742,7 +1731,7 @@ export function SessionDetail({
             {detachedNotifications.map((notice) => (
               <NotificationCard key={notice.noticeId} notice={notice} />
             ))}
-            {runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running" ? (
+            {!creationFailed && (runtimeStatus === "waiting" || runtimeStatus === "pending" || runtimeStatus === "running") ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" />
                 <span>
@@ -1781,7 +1770,24 @@ export function SessionDetail({
           {onOpenReview && turnReviewDisplay.activeReview ? (
             <SessionReviewTag files={turnReviewDisplay.activeReview.files} onReview={() => onOpenReview()} />
           ) : null}
-          <SessionComposer
+          {creationFailed ? (
+            <div className="mx-auto w-full max-w-3xl p-4">
+              <Alert>
+                <CircleAlert />
+                <AlertTitle>{tSession(creation.resultUnknown ? "creationUnconfirmed" : "creationFailed")}</AlertTitle>
+                <AlertDescription>
+                  <p>{creation.message || tSession("creationFailed")}</p>
+                  <p>{tSession(creation.resultUnknown ? "creationCheckFirst" : "creationDraftRetained")}</p>
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    {creation.retryable ? <Button onClick={() => retrySessionCreation(sessionId)}>{tSession("retryCreation")}</Button> : null}
+                    {!creation.resultUnknown ? <Button variant="outline" onClick={() => editSessionCreation(sessionId)}>{tSession("editCreation")}</Button> : null}
+                    {creation.resultUnknown && creation.serverSessionId ? <Button variant="outline" onClick={() => openSession(creation.serverSessionId!)}>{tSession("checkCreatedSession")}</Button> : null}
+                    <Button variant="outline" onClick={() => navigateToDevice(session.connectorId)}>{tSession("checkDeviceSessions")}</Button>
+                  </div>
+                </AlertDescription>
+              </Alert>
+            </div>
+          ) : <SessionComposer
             token={token}
             session={session}
             runtimeState={runtimeState}
@@ -1804,7 +1810,7 @@ export function SessionDetail({
             onInterrupt={handleInterrupt}
             onCommand={handleSessionCommand}
             onToggleTakeover={() => setPendingTakeover(!session.takeover)}
-          />
+          />}
         </div>
       </div>
       <Dialog
